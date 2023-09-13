@@ -216,3 +216,50 @@ TEST(TableViewTest, testMultiTopicAndAutoUpdatePartitions) {
 
     client.close();
 }
+
+TEST(TableViewTest, testMessageEncryption) {
+    ClientConfiguration config;
+    Client client(lookupUrl);
+
+    std::string topicName = "testMessageEncryption" + std::to_string(time(nullptr));
+
+    std::string PUBLIC_CERT_FILE_PATH = "../test-conf/public-key.client-rsa.pem";
+    std::string PRIVATE_CERT_FILE_PATH = "../test-conf/private-key.client-rsa.pem";
+    std::shared_ptr<pulsar::DefaultCryptoKeyReader> keyReader =
+        std::make_shared<pulsar::DefaultCryptoKeyReader>(PUBLIC_CERT_FILE_PATH, PRIVATE_CERT_FILE_PATH);
+
+    ProducerConfiguration producerConfig;
+    producerConfig.addEncryptionKey("client-rsa.pem");
+    producerConfig.setCryptoKeyReader(keyReader);
+    Producer producer;
+    ASSERT_EQ(ResultOk, client.createProducer(topicName, producerConfig, producer));
+
+    TableViewConfiguration tvConf;
+    tvConf.cryptoKeyReader = keyReader;
+    TableView tableView;
+    ASSERT_EQ(ResultOk, client.createTableView(topicName, tvConf, tableView));
+
+    int numberOfMessages = 10;
+    std::string msgContent = "msg-content";
+    std::set<std::string> valuesSent;
+    Message msg;
+    for (int i = 0; i < numberOfMessages; ++i) {
+        std::string key = std::to_string(i);
+        auto value = msgContent + key;
+        valuesSent.emplace(value);
+        msg = MessageBuilder().setPartitionKey(key).setContent(value).build();
+        ASSERT_EQ(ResultOk, producer.send(msg));
+    }
+
+    std::set<std::string> valuesReceived;
+    for (int i = 0; i < numberOfMessages; ++i) {
+        std::string key = std::to_string(i);
+        std::string value;
+        ASSERT_EQ(ResultOk, tableView.getValue(key, value));
+        valuesReceived.emplace(value);
+    }
+
+    ASSERT_EQ(valuesSent, valuesReceived);
+
+    ASSERT_EQ(ResultOk, client.close());
+}
